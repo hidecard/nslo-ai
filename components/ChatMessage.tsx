@@ -1,13 +1,16 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ChatMessage as ChatMessageType } from '../types';
-import { generateSpeech, decodeBase64Audio, playAudioBuffer, generateGrammarVisual } from '../services/geminiService';
+import { speakText, stopSpeaking, isPuterAvailable } from '../services/puterService';
 
 interface ChatMessageProps {
   message: ChatMessageType;
   onSave?: (text: string) => void;
   isSaved?: boolean;
 }
+
+// Ref to track if speech is currently playing
+const speechRef = { isPlaying: false };
 
 const AudioButton: React.FC<{ text: string, isPlaying: boolean, onPlay: (text: string) => void, className?: string }> = ({ text, isPlaying, onPlay, className }) => (
   <button 
@@ -22,74 +25,13 @@ const AudioButton: React.FC<{ text: string, isPlaying: boolean, onPlay: (text: s
   </button>
 );
 
+// Grammar Visual component - disabled since Puter.js doesn't support image generation
 const GrammarVisual: React.FC<{ description: string }> = ({ description }) => {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-    const fetchImage = async () => {
-      try {
-        const url = await generateGrammarVisual(description);
-        if (mounted) {
-          if (url) {
-            setImageUrl(url);
-          } else {
-            setError(true);
-          }
-          setLoading(false);
-        }
-      } catch (e) {
-        if (mounted) {
-          setError(true);
-          setLoading(false);
-        }
-      }
-    };
-    fetchImage();
-    return () => { mounted = false; };
-  }, [description]);
-
-  const handleDownload = () => {
-    if (!imageUrl) return;
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `Grammar_Visual_${Date.now()}.png`;
-    link.click();
-  };
-
-  if (loading) {
-    return (
-      <div className="w-full aspect-video bg-indigo-50/30 rounded-2xl flex flex-col items-center justify-center gap-3 animate-pulse border-2 border-dashed border-indigo-100 mb-6">
-        <div className="w-10 h-10 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-        <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Crafting Visual Aid</span>
-            <span className="text-[8px] text-indigo-300 mt-1 uppercase italic">Designing Infographic...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !imageUrl) return null;
-
   return (
-    <div className="mb-6 group relative overflow-hidden rounded-2xl border-2 border-indigo-50 shadow-md bg-white transition-all hover:shadow-xl hover:border-indigo-100">
-      <img src={imageUrl} alt="Grammar Diagram" className="w-full h-auto object-cover" />
-      <div className="absolute top-3 right-3 flex gap-2">
-        <button 
-          onClick={handleDownload}
-          className="bg-white/90 hover:bg-white p-2 rounded-xl text-indigo-600 shadow-lg opacity-0 group-hover:opacity-100 transition-all active:scale-95"
-          title="Download Diagram"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-          </svg>
-        </button>
-      </div>
-      <div className="px-4 py-2 bg-indigo-50/80 border-t border-indigo-50 flex items-center justify-between">
-        <span className="text-[9px] font-black text-indigo-800 uppercase tracking-widest">Educational Diagram</span>
-        <span className="text-[9px] font-medium text-indigo-400 italic">Created by NSLO AI</span>
+    <div className="w-full aspect-video bg-indigo-50/30 rounded-2xl flex flex-col items-center justify-center gap-3 border-2 border-dashed border-indigo-100 mb-6">
+      <div className="text-center px-6">
+        <span className="text-4xl mb-3 block">🎨</span>
+        <p className="text-sm text-indigo-600 font-medium mb-1">Grammar Visual: {description}</p>
       </div>
     </div>
   );
@@ -160,16 +102,41 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onSave, isSaved }) =
   }, [message.text]);
 
   const handleSpeech = async (textToSpeak: string) => {
-    if (isPlaying) return;
-    setIsPlaying(true);
-    // Clean all potentially annoying markdown symbols for TTS
-    const cleanedTextForTTS = textToSpeak.replace(/[#*|\[\]]/g, '').replace(/->/g, ' means ').trim();
-    const audioData = await generateSpeech(cleanedTextForTTS);
-    if (audioData) {
-      const bytes = decodeBase64Audio(audioData);
-      await playAudioBuffer(bytes);
+    if (!window.speechSynthesis) {
+      console.warn('SpeechSynthesis not available');
+      return;
     }
-    setIsPlaying(false);
+
+    // Toggle speech - if speaking, stop it
+    if (speechRef.isPlaying) {
+      stopSpeaking();
+      setIsPlaying(false);
+      speechRef.isPlaying = false;
+      return;
+    }
+    
+    setIsPlaying(true);
+    speechRef.isPlaying = true;
+    
+    // Clean all potentially annoying markdown symbols for TTS
+    const cleanedTextForTTS = textToSpeak.replace(/[#*|\[\]]/g, '').replace(/->/g, ' means ').replace(/\n/g, ' ').trim();
+    
+    const utterance = new SpeechSynthesisUtterance(cleanedTextForTTS);
+    utterance.lang = 'en-US';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    
+    utterance.onend = () => {
+      speechRef.isPlaying = false;
+      setIsPlaying(false);
+    };
+    
+    utterance.onerror = () => {
+      speechRef.isPlaying = false;
+      setIsPlaying(false);
+    };
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const togglePracticeAnswer = (idx: number) => {

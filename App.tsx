@@ -1,10 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { ProficiencyLevel, ChatMessage as ChatMessageType, SavedLesson } from './types';
-import { createChat } from './services/geminiService';
+import { createChatSession, sendMessageToPuter, speakText, stopSpeaking, isPuterAvailable, PuterChatSession } from './services/puterService';
 import LevelSelector from './components/LevelSelector';
 import ChatMessage from './components/ChatMessage';
-import { Chat } from '@google/genai';
 
 interface Topic {
   title: string;
@@ -70,9 +69,25 @@ const App: React.FC = () => {
   const [isThinking, setIsThinking] = useState(false);
   const [savedLessons, setSavedLessons] = useState<SavedLesson[]>([]);
   const [showReviewBook, setShowReviewBook] = useState(false);
+  const [puterStatus, setPuterStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
   
-  const chatInstance = useRef<Chat | null>(null);
+  const chatInstance = useRef<PuterChatSession | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Check if Puter.js is available
+    const checkPuter = () => {
+      if (isPuterAvailable()) {
+        setPuterStatus('available');
+      } else {
+        setPuterStatus('unavailable');
+      }
+    };
+    
+    // Give Puter.js script time to load
+    const timer = setTimeout(checkPuter, 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem('nslo_saved_lessons');
@@ -90,16 +105,17 @@ const App: React.FC = () => {
   }, [savedLessons]);
 
   useEffect(() => {
-    if (level && !chatInstance.current) {
-      chatInstance.current = createChat(level);
+    if (level && !chatInstance.current && puterStatus === 'available') {
+      chatInstance.current = createChatSession(level);
       const greet = async () => {
         setIsThinking(true);
         try {
-          const result = await chatInstance.current?.sendMessage({ 
-            message: "Hello teacher! Let's start a lesson. Introduce yourself briefly as NSLO AI and tell me you are ready to help with any grammar topic, a listening challenge, or a story/poem for reading." 
-          });
+          const result = await sendMessageToPuter(
+            chatInstance.current!,
+            "Hello teacher! Let's start a lesson. Introduce yourself briefly as NSLO AI and tell me you are ready to help with any grammar topic, a listening challenge, or a story/poem for reading."
+          );
           if (result) {
-            setChatHistory([{ role: 'model', text: result.text }]);
+            setChatHistory([{ role: 'model', text: result }]);
           }
         } catch (error) {
           console.error("Initialization error:", error);
@@ -109,7 +125,7 @@ const App: React.FC = () => {
       };
       greet();
     }
-  }, [level]);
+  }, [level, puterStatus]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -122,7 +138,7 @@ const App: React.FC = () => {
   };
 
   const handleSendMessage = async (text: string) => {
-    if (!text.trim() || isThinking || !chatInstance.current) return;
+    if (!text.trim() || isThinking || !chatInstance.current || puterStatus !== 'available') return;
 
     const userMessage: ChatMessageType = { role: 'user', text };
     setChatHistory(prev => [...prev, userMessage]);
@@ -130,8 +146,8 @@ const App: React.FC = () => {
     setIsThinking(true);
 
     try {
-      const response = await chatInstance.current.sendMessage({ message: text });
-      const modelMessage: ChatMessageType = { role: 'model', text: response.text };
+      const response = await sendMessageToPuter(chatInstance.current, text);
+      const modelMessage: ChatMessageType = { role: 'model', text: response };
       setChatHistory(prev => [...prev, modelMessage]);
     } catch (error) {
       console.error("Chat error:", error);
@@ -199,17 +215,44 @@ const App: React.FC = () => {
                 <p className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider">Never Stop Learning Online</p>
               </div>
             </div>
-            {savedLessons.length > 0 && (
-              <button onClick={() => setShowReviewBook(true)} className="flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold hover:bg-amber-200 transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
-                </svg>
-                Review Book ({savedLessons.length})
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {savedLessons.length > 0 && (
+                <button onClick={() => setShowReviewBook(true)} className="flex items-center gap-2 px-4 py-2 bg-amber-100 text-amber-700 rounded-lg font-bold hover:bg-amber-200 transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+                  </svg>
+                  Review Book ({savedLessons.length})
+                </button>
+              )}
+              {/* Puter.js Status Indicator */}
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100">
+                <span className={`w-2 h-2 rounded-full ${
+                  puterStatus === 'available' ? 'bg-green-500 animate-pulse' : 
+                  puterStatus === 'unavailable' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
+                }`}></span>
+                <span className="text-xs font-medium text-gray-600">
+                  {puterStatus === 'checking' ? 'Connecting...' : 
+                   puterStatus === 'available' ? 'Puter.js Ready' : 'Using Demo Mode'}
+                </span>
+              </div>
+            </div>
           </div>
         </header>
-        <LevelSelector onSelect={handleLevelSelect} />
+        
+        {/* Status Message */}
+        {puterStatus === 'unavailable' && (
+          <div className="max-w-6xl mx-auto px-4 py-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <p className="font-bold text-amber-800">Puter.js is loading...</p>
+                <p className="text-sm text-amber-600">Please wait a moment while we connect to Gemini models.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <LevelSelector onSelect={handleLevelSelect} isDisabled={puterStatus !== 'available'} />
         {showReviewBook && <ReviewBookModal lessons={savedLessons} onClose={() => setShowReviewBook(false)} onRemove={removeSavedLesson} />}
       </div>
     );
@@ -346,7 +389,7 @@ const App: React.FC = () => {
             </button>
           </form>
           <div className="mt-2 flex gap-4 text-[10px] text-gray-400 font-medium uppercase tracking-widest justify-center">
-            <span>Powered by Gemini 3</span>
+            <span>Powered by Puter.js (Free Gemini Access)</span>
             <span className="text-indigo-500 font-bold">NSLO AI: Never Stop Learning Online</span>
           </div>
         </div>

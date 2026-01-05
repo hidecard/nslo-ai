@@ -4,6 +4,7 @@ import { ProficiencyLevel } from '../types';
 
 interface LevelSelectorProps {
   onSelect: (level: ProficiencyLevel) => void;
+  isDisabled?: boolean;
 }
 
 const levels: { id: ProficiencyLevel; title: string; desc: string; icon: string }[] = [
@@ -13,7 +14,7 @@ const levels: { id: ProficiencyLevel; title: string; desc: string; icon: string 
   { id: 'IELTS', title: 'IELTS Prep', desc: 'Focus on Exam techniques and academic English.', icon: '🎓' },
 ];
 
-const LevelSelector: React.FC<LevelSelectorProps> = ({ onSelect }) => {
+const LevelSelector: React.FC<LevelSelectorProps> = ({ onSelect, isDisabled }) => {
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
       <div className="text-center mb-12">
@@ -21,12 +22,16 @@ const LevelSelector: React.FC<LevelSelectorProps> = ({ onSelect }) => {
         <p className="text-lg text-gray-600 myanmar-text">သင်၏ အင်္ဂလိပ်စာ လေ့လာမှုခရီးစဉ်ကို စတင်ရန် အဆင့်တစ်ခု ရွေးချယ်ပါ။</p>
       </div>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 ${isDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
         {levels.map((level) => (
           <button
             key={level.id}
-            onClick={() => onSelect(level.id)}
-            className="flex items-start p-6 bg-white rounded-2xl shadow-sm border-2 border-transparent hover:border-indigo-500 hover:shadow-md transition-all text-left"
+            onClick={() => !isDisabled && onSelect(level.id)}
+            className={`flex items-start p-6 bg-white rounded-2xl shadow-sm border-2 transition-all text-left ${
+              isDisabled 
+                ? 'border-gray-100 grayscale' 
+                : 'border-transparent hover:border-indigo-500 hover:shadow-md'
+            }`}
           >
             <span className="text-4xl mr-4">{level.icon}</span>
             <div>
@@ -36,6 +41,13 @@ const LevelSelector: React.FC<LevelSelectorProps> = ({ onSelect }) => {
           </button>
         ))}
       </div>
+      
+      {isDisabled && (
+        <div className="text-center mt-8">
+          <p className="text-gray-500 myanmar-text">Puter.js ချိတ်ဆက်နေဆဲ ဖြစ်ပါသည်။ ခဏစောင့်ပေးပါ။</p>
+          <p className="text-xs text-gray-400 mt-2">Puter.js is still connecting...</p>
+        </div>
+      )}
     </div>
   );
 };
