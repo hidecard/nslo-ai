@@ -1,7 +1,6 @@
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ChatMessage as ChatMessageType } from '../types';
-import { speakText, stopSpeaking, isPuterAvailable } from '../services/puterService';
+import { speakText, stopSpeaking, isPuterAvailable, containsMyanmarScript, generateImageWithPuter } from '../services/puterService';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -25,13 +24,118 @@ const AudioButton: React.FC<{ text: string, isPlaying: boolean, onPlay: (text: s
   </button>
 );
 
-// Grammar Visual component - disabled since Puter.js doesn't support image generation
+// Grammar Visual component - Now with FREE Puter.js image generation!
 const GrammarVisual: React.FC<{ description: string }> = ({ description }) => {
+  const [imageElement, setImageElement] = useState<HTMLImageElement | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasGenerated, setHasGenerated] = useState(false);
+
+  const generateImage = async () => {
+    if (hasGenerated || isLoading) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      console.log('NSLO: Generating grammar visual:', description);
+      const img = await generateImageWithPuter(description, {
+        model: 'gpt-image-1', // Use GPT Image for educational content
+        quality: 'medium'
+      });
+      setImageElement(img);
+      setHasGenerated(true);
+      console.log('NSLO: Grammar visual generated successfully');
+    } catch (err) {
+      console.error('NSLO: Failed to generate grammar visual:', err);
+      setError(err instanceof Error ? err.message : 'Failed to generate image');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Auto-generate on mount (but only once)
+  useEffect(() => {
+    if (!hasGenerated && !isLoading) {
+      generateImage();
+    }
+  }, []);
+
   return (
-    <div className="w-full aspect-video bg-indigo-50/30 rounded-2xl flex flex-col items-center justify-center gap-3 border-2 border-dashed border-indigo-100 mb-6">
-      <div className="text-center px-6">
-        <span className="text-4xl mb-3 block">🎨</span>
-        <p className="text-sm text-indigo-600 font-medium mb-1">Grammar Visual: {description}</p>
+    <div className="w-full max-w-2xl mx-auto mb-6">
+      <div className="bg-white rounded-2xl border-2 border-indigo-100 shadow-sm overflow-hidden">
+        <div className="p-4 bg-indigo-50/50 border-b border-indigo-100">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🎨</span>
+              <span className="text-sm font-bold text-indigo-800">Grammar Visual</span>
+            </div>
+            {!hasGenerated && !isLoading && (
+              <button
+                onClick={generateImage}
+                className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                Generate Image
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="relative">
+          {isLoading && (
+            <div className="aspect-video flex items-center justify-center bg-gray-50">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-2"></div>
+                <p className="text-sm text-gray-600">Generating visual...</p>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="aspect-video flex items-center justify-center bg-red-50">
+              <div className="text-center px-6">
+                <span className="text-2xl mb-2 block">⚠️</span>
+                <p className="text-sm text-red-600 font-medium">Failed to generate image</p>
+                <p className="text-xs text-red-500 mt-1">{error}</p>
+                <button
+                  onClick={generateImage}
+                  className="mt-3 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Try Again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {imageElement && (
+            <div className="relative">
+              <img
+                src={imageElement.src}
+                alt={description}
+                className="w-full h-auto max-h-96 object-contain"
+                style={{ display: 'block' }}
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-black/70 text-white p-2">
+                <p className="text-xs opacity-90">{description}</p>
+              </div>
+            </div>
+          )}
+
+          {!isLoading && !error && !imageElement && (
+            <div className="aspect-video flex items-center justify-center bg-indigo-50/30">
+              <div className="text-center px-6">
+                <span className="text-3xl mb-3 block">🎨</span>
+                <p className="text-sm text-indigo-600 font-medium mb-3">Click to generate visual aid</p>
+                <button
+                  onClick={generateImage}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Generate Grammar Visual
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -41,6 +145,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onSave, isSaved }) =
   const [isPlaying, setIsPlaying] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [revealedAnswers, setRevealedAnswers] = useState<Record<string, boolean>>({});
+  const [speechError, setSpeechError] = useState<string | null>(null);
   
   const isModel = message.role === 'model';
 
@@ -101,42 +206,43 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onSave, isSaved }) =
     return { visuals, challenges, practices, quizzes, cleanText };
   }, [message.text]);
 
-  const handleSpeech = async (textToSpeak: string) => {
-    if (!window.speechSynthesis) {
-      console.warn('SpeechSynthesis not available');
-      return;
-    }
-
+  const handleSpeech = (textToSpeak: string) => {
+    // Clear any previous error
+    setSpeechError(null);
+    
     // Toggle speech - if speaking, stop it
     if (speechRef.isPlaying) {
       stopSpeaking();
-      setIsPlaying(false);
       speechRef.isPlaying = false;
+      setIsPlaying(false);
       return;
     }
     
-    setIsPlaying(true);
     speechRef.isPlaying = true;
+    setIsPlaying(true);
     
     // Clean all potentially annoying markdown symbols for TTS
     const cleanedTextForTTS = textToSpeak.replace(/[#*|\[\]]/g, '').replace(/->/g, ' means ').replace(/\n/g, ' ').trim();
     
-    const utterance = new SpeechSynthesisUtterance(cleanedTextForTTS);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
+    // Auto-detect language based on text content
+    const detectedLang = containsMyanmarScript(cleanedTextForTTS) ? 'my-MM' : 'en-US';
     
-    utterance.onend = () => {
-      speechRef.isPlaying = false;
-      setIsPlaying(false);
-    };
-    
-    utterance.onerror = () => {
-      speechRef.isPlaying = false;
-      setIsPlaying(false);
-    };
-    
-    window.speechSynthesis.speak(utterance);
+    // Use the speakText function with callbacks
+    speakText(
+      cleanedTextForTTS,
+      detectedLang,
+      () => {
+        // onEnd callback
+        speechRef.isPlaying = false;
+        setIsPlaying(false);
+      },
+      (error) => {
+        // onError callback
+        speechRef.isPlaying = false;
+        setIsPlaying(false);
+        setSpeechError(error);
+      }
+    );
   };
 
   const togglePracticeAnswer = (idx: number) => {
@@ -251,6 +357,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onSave, isSaved }) =
             ? 'bg-white text-gray-800 border border-indigo-100 rounded-tl-none' 
             : 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-100'
         }`}>
+          
+          {/* Speech Error Message */}
+          {speechError && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600">
+              Audio error: {speechError}. Please try again.
+            </div>
+          )}
           
           {isModel && parsedContent.visuals.map((visual, idx) => (
             <GrammarVisual key={`visual-${idx}`} description={visual} />
@@ -403,3 +516,4 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onSave, isSaved }) =
 };
 
 export default ChatMessage;
+

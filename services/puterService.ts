@@ -6,6 +6,7 @@ declare global {
     puter: {
       ai: {
         chat: (prompt: string, options?: any) => Promise<any> | any;
+        txt2img: (prompt: string, options?: any) => Promise<HTMLImageElement>;
       };
     };
   }
@@ -36,9 +37,10 @@ const getSystemInstruction = (level: ProficiencyLevel): string => {
     3. Pronunciation: Show Myanmar pronunciation (အသံထွက်) for keywords. Example: apple -> အာ-ပလ်.
     4. Breakdown sentences: Subject | Verb | Object | Complement | Adjective | Adverb.
 
-    NEW FEATURE: Visual Aids
-    Always include a visual diagram [GRAMMAR_VISUAL: ...] when introducing a new tense, a complex sentence structure, or confusing word pairs (like since/for).
+    NEW FEATURE: Visual Aids (Educational Diagrams)
+    Include visual diagrams [GRAMMAR_VISUAL: ...] when introducing grammar concepts to help Myanmar learners visualize English grammar.
     - YOU MUST USE THIS TAG: [GRAMMAR_VISUAL: A professional, minimalist educational infographic of this grammar rule. Use high contrast, clear English text labels, and a clean white background. Show arrows, timelines, or boxes to represent structure.]
+    - Note: Visual aids help learners understand complex concepts through diagrams and examples. Image generation may require Puter.js account funding for unlimited use.
 
     NEW FEATURE: Stories & Poems (Reading/Listening)
     When providing a Story or Poem:
@@ -241,6 +243,44 @@ export const analyzeImageWithPuter = async (
   });
 };
 
+// FREE Image Generation using Puter.js
+export const generateImageWithPuter = async (
+  prompt: string,
+  options?: {
+    model?: string;
+    quality?: string;
+  }
+): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const puterAI = (window as any).puter?.ai;
+    if (!puterAI) {
+      reject(new Error('Puter.js is not available'));
+      return;
+    }
+
+    // Default options
+    const defaultOptions = {
+      model: 'gpt-image-1', // Default model
+      quality: 'low' // Default quality
+    };
+
+    const finalOptions = { ...defaultOptions, ...options };
+
+    console.log('NSLO Image Generation: Generating image with prompt:', prompt.substring(0, 100) + '...');
+    console.log('NSLO Image Generation: Using model:', finalOptions.model, 'quality:', finalOptions.quality);
+
+    puterAI.txt2img(prompt, finalOptions)
+      .then((imageElement: HTMLImageElement) => {
+        console.log('NSLO Image Generation: Image generated successfully');
+        resolve(imageElement);
+      })
+      .catch((error: Error) => {
+        console.error('NSLO Image Generation: Failed to generate image:', error);
+        reject(error);
+      });
+  });
+};
+
 // Utility to format conversation history for context
 export const getConversationContext = (session: PuterChatSession): string => {
   return session.messages
@@ -250,13 +290,28 @@ export const getConversationContext = (session: PuterChatSession): string => {
 
 // Note: Puter.js does not support:
 // 1. Text-to-Speech (TTS) - Use browser SpeechSynthesis API as fallback
-// 2. Image Generation - No equivalent in Puter.js
+// 2. Image Generation - Now supported via puter.ai.txt2img()
 // 3. Persistent chat sessions - Manual history tracking required
 
+// Helper function to detect if text contains Myanmar script
+const containsMyanmarScript = (text: string): boolean => {
+  // Myanmar Unicode range: \u1000-\u109F
+  const myanmarPattern = /[\u1000-\u109F]/;
+  return myanmarPattern.test(text);
+};
+
+// Track current utterance for interruption handling
+let currentUtterance: SpeechSynthesisUtterance | null = null;
+
 // Fallback TTS using browser's built-in SpeechSynthesis
-export const speakText = (text: string, lang: string = 'en-US'): void => {
-  if (typeof window === 'undefined' || !window.speechSynthesis) {
-    console.warn('SpeechSynthesis not available');
+export const speakText = (
+  text: string, 
+  lang?: string,
+  onEnd?: () => void,
+  onError?: (error: string) => void
+): void => {
+  if (typeof window === 'undefined') {
+    if (onError) onError('SpeechSynthesis not available');
     return;
   }
   
@@ -273,46 +328,109 @@ export const speakText = (text: string, lang: string = 'en-US'): void => {
 
   if (!cleanedText) return;
 
-  // Cancel any ongoing speech
-  window.speechSynthesis.cancel();
-
-  const utterance = new SpeechSynthesisUtterance(cleanedText);
-  utterance.lang = lang;
-  utterance.rate = 0.9;
-  utterance.pitch = 1;
-  utterance.volume = 1;
-
-  // Try to find a good English voice
-  const voices = window.speechSynthesis.getVoices();
-  const englishVoice = voices.find(voice => 
-    voice.lang.startsWith('en') && voice.name.includes('Google')
-  ) || voices.find(voice => 
-    voice.lang.startsWith('en')
-  );
+  // Auto-detect language if not provided
+  const detectedLang = lang || (containsMyanmarScript(cleanedText) ? 'my-MM' : 'en-US');
   
-  if (englishVoice) {
-    utterance.voice = englishVoice;
-  }
+  console.log('NSLO TTS: Speaking text in', detectedLang);
+  console.log('NSLO TTS: Text:', cleanedText.substring(0, 50) + '...');
+  
+  // Cancel any ongoing speech first
+  window.speechSynthesis.cancel();
+  
+  // Small delay to ensure cancel completes
+  setTimeout(() => {
+    const utterance = new SpeechSynthesisUtterance(cleanedText);
+    utterance.lang = detectedLang;
+    utterance.rate = 0.85; // Slightly slower for better clarity
+    utterance.pitch = 1;
+    utterance.volume = 1;
 
-  // Handle errors
-  utterance.onerror = (event) => {
-    console.warn('Speech synthesis error:', event.error);
-  };
+    // Get available voices
+    const voices = window.speechSynthesis.getVoices();
+    console.log('NSLO TTS: Available voices:', voices.length);
+    
+    // Log all available voices for debugging
+    if (voices.length > 0) {
+      console.log('NSLO TTS: Voice list:');
+      voices.forEach((v, i) => {
+        console.log(`  ${i}: ${v.name} (${v.lang}) ${v.localService ? '[local]' : '[remote]'}`);
+      });
+    }
+    
+    // Try to find a voice that matches the language
+    let selectedVoice = null;
+    
+    if (detectedLang === 'my-MM' || detectedLang === 'my') {
+      // For Myanmar, try various Myanmar-related language codes
+      const myanmarLangCodes = ['my-MM', 'my', 'bur-MM', 'bur', 'myanmar-MM', 'myanmar'];
+      
+      for (const langCode of myanmarLangCodes) {
+        selectedVoice = voices.find(voice => 
+          voice.lang === langCode || 
+          voice.lang.startsWith(langCode.split('-')[0])
+        );
+        if (selectedVoice) {
+          console.log('NSLO TTS: Found Myanmar voice:', selectedVoice.name, selectedVoice.lang);
+          break;
+        }
+      }
+    } else {
+      // For English, look for Google English voice first
+      selectedVoice = voices.find(voice => 
+        voice.lang.startsWith('en') && voice.name.includes('Google')
+      ) || voices.find(voice => 
+        voice.lang.startsWith('en')
+      );
+    }
+    
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+      console.log('NSLO TTS: Using voice:', selectedVoice.name);
+    } else {
+      console.log('NSLO TTS: No matching voice found, using default');
+    }
 
-  utterance.onend = () => {
-    // Reset playing state
-  };
+    // Track current utterance for potential cleanup
+    currentUtterance = utterance;
 
-  try {
-    window.speechSynthesis.speak(utterance);
-  } catch (error) {
-    console.warn('Failed to speak:', error);
-  }
+    // Handle errors
+    utterance.onerror = (event) => {
+      console.log('NSLO TTS: Speech error:', event.error);
+      // 'interrupted' is normal when user clicks another audio button
+      if (event.error !== 'interrupted') {
+        if (onError) onError(event.error);
+      }
+      currentUtterance = null;
+    };
+
+    utterance.onend = () => {
+      console.log('NSLO TTS: Speech ended successfully');
+      currentUtterance = null;
+      if (onEnd) onEnd();
+    };
+
+    utterance.onstart = () => {
+      console.log('NSLO TTS: Speech started');
+    };
+
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.warn('NSLO TTS: Failed to speak:', error);
+      currentUtterance = null;
+      if (onError) onError('Speech synthesis failed');
+    }
+  }, 50);
 };
 
+// Export helper function for language detection
+export { containsMyanmarScript };
+
 export const stopSpeaking = (): void => {
+  console.log('NSLO TTS: Stopping speech');
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.cancel();
+    currentUtterance = null;
   }
 };
 
@@ -335,3 +453,41 @@ export const getAvailableModels = (): string[] => {
   ];
 };
 
+// Get available image generation models via Puter.js
+export const getAvailableImageModels = (): string[] => {
+  return [
+    'gemini-2.5-flash-image-preview',
+    'gpt-image-1.5',
+    'gpt-image-1',
+    'gpt-image-1-mini',
+    'dall-e-3',
+    'dall-e-2',
+    'ByteDance-Seed/Seedream-3.0',
+    'ByteDance-Seed/Seedream-4.0',
+    'HiDream-ai/HiDream-I1-Dev',
+    'HiDream-ai/HiDream-I1-Fast',
+    'HiDream-ai/HiDream-I1-Full',
+    'Lykon/DreamShaper',
+    'Qwen/Qwen-Image',
+    'RunDiffusion/Juggernaut-pro-flux',
+    'Rundiffusion/Juggernaut-Lightning-Flux',
+    'black-forest-labs/FLUX.1-Canny-pro',
+    'black-forest-labs/FLUX.1-dev',
+    'black-forest-labs/FLUX.1-dev-lora',
+    'black-forest-labs/FLUX.1-kontext-dev',
+    'black-forest-labs/FLUX.1-kontext-max',
+    'black-forest-labs/FLUX.1-kontext-pro',
+    'black-forest-labs/FLUX.1-krea-dev',
+    'black-forest-labs/FLUX.1-pro',
+    'black-forest-labs/FLUX.1-schnell',
+    'black-forest-labs/FLUX.1-schnell-Free',
+    'black-forest-labs/FLUX.1.1-pro',
+    'google/flash-image-2.5',
+    'google/imagen-4.0-fast',
+    'google/imagen-4.0-preview',
+    'google/imagen-4.0-ultra',
+    'ideogram/ideogram-3.0',
+    'stabilityai/stable-diffusion-3-medium',
+    'stabilityai/stable-diffusion-xl-base-1.0'
+  ];
+};
