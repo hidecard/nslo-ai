@@ -232,7 +232,7 @@ const App: React.FC = () => {
                 }`}></span>
                 <span className="text-xs font-medium text-gray-600">
                   {puterStatus === 'checking' ? 'Connecting...' : 
-                   puterStatus === 'available' ? 'Puter.js Ready' : 'Using Demo Mode'}
+                   puterStatus === 'available' ? 'NSLO AI Ready' : 'Using Demo Mode'}
                 </span>
               </div>
             </div>
@@ -389,7 +389,7 @@ const App: React.FC = () => {
             </button>
           </form>
           <div className="mt-2 flex gap-4 text-[10px] text-gray-400 font-medium uppercase tracking-widest justify-center">
-            <span>Powered by Puter.js (Free Gemini Access)</span>
+            <span>Powered by</span>
             <span className="text-indigo-500 font-bold">NSLO AI: Never Stop Learning Online</span>
           </div>
         </div>
