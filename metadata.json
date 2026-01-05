@@ -1,0 +1,8 @@
+
+{
+  "name": "NSLO AI - Myanmar's English Tutor",
+  "description": "Never Stop Learning Online - A dedicated English learning platform for Myanmar learners, providing structured lessons, grammar breakdowns, and real-time audio pronunciation using Gemini AI.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
